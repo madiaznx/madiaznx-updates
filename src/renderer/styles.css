@@ -406,15 +406,16 @@ input:focus-visible {
 }
 
 .progress-block {
-  grid-column: 2 / 4;
+  grid-column: 1 / -1;
   display: grid;
   gap: 7px;
-  margin-top: -4px;
+  margin-top: 0;
 }
 
 .progress-line {
-  height: 7px;
+  height: 9px;
   overflow: hidden;
+  border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-strong);
 }
@@ -425,6 +426,21 @@ input:focus-visible {
   border-radius: inherit;
   background: var(--brand);
   transition: width 160ms ease;
+}
+
+.progress-line.is-indeterminate .progress-fill {
+  width: 42% !important;
+  animation: progress-slide 1.05s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(260%);
+  }
 }
 
 .progress-text {

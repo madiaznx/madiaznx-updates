@@ -227,15 +227,37 @@ function renderApps() {
   });
 }
 
+function installedLabel(installed) {
+  return installed?.installSource === 'system' ? 'Instalado no Windows' : 'Instalado';
+}
+
+function normalizedVersion(value) {
+  const match = String(value || '').toLowerCase().match(/v?(\d+(?:\.\d+){0,3}(?:[-+][a-z0-9.-]+)?)/);
+  return match ? match[1].replace(/^v/, '') : '';
+}
+
+function hasUpdateAvailable(installed, latest) {
+  if (!installed || !latest) return false;
+  if (installed.versionKey === latest.versionKey) return false;
+
+  if (installed.installSource === 'system') {
+    const installedVersion = normalizedVersion(installed.versionName);
+    const latestVersion = normalizedVersion(latest.versionName);
+    return Boolean(installedVersion && latestVersion && installedVersion !== latestVersion);
+  }
+
+  return true;
+}
+
 function renderAppCard(appInfo) {
   const installed = state.installed[appInfo.id];
   const latest = appInfo.latest;
   const progress = state.progress[appInfo.id];
-  const hasUpdate = installed && latest && installed.versionKey !== latest.versionKey;
+  const hasUpdate = hasUpdateAvailable(installed, latest);
   const iconUrl = installed?.iconUrl || appInfo.iconUrl || fallbackLogo;
   const description = appInfo.description || appInfo.repoUrl;
   const statusPill = installed
-    ? `<span class="state-pill ${hasUpdate ? 'update' : 'installed'}">${hasUpdate ? 'Atualização disponível' : 'Instalado'}</span>`
+    ? `<span class="state-pill ${hasUpdate ? 'update' : 'installed'}">${hasUpdate ? 'Atualização disponível' : installedLabel(installed)}</span>`
     : '';
 
   return `
@@ -254,6 +276,7 @@ function renderAppCard(appInfo) {
           <span class="meta-chip">${formatSize(latest.size)}</span>
           <span class="meta-chip">${sourceLabel(latest.source)}</span>
           ${installed ? `<span class="meta-chip">Atual: ${escapeHtml(installed.versionName)}</span>` : ''}
+          ${installed?.installSource === 'system' ? '<span class="meta-chip">Detectado pelo Windows</span>' : ''}
         </div>
       </div>
       <div class="app-actions">
@@ -279,14 +302,17 @@ function renderActions(appInfo, installed, hasUpdate) {
     ${hasUpdate ? `<button class="btn btn-primary" type="button" data-action="update" data-app-id="${escapeAttr(appInfo.id)}">${icons.update}<span>Atualizar</span></button>` : `<span class="state-pill installed">${icons.check}<span>Atualizado</span></span>`}
     <button class="btn btn-neutral" type="button" data-action="versions" data-app-id="${escapeAttr(appInfo.id)}">${icons.versions}<span>Versões</span></button>
     <button class="btn btn-soft" type="button" data-action="installer-options" data-app-id="${escapeAttr(appInfo.id)}" title="Opções do instalador">${icons.gear}</button>
-    <button class="btn btn-danger" type="button" data-action="uninstall" data-app-id="${escapeAttr(appInfo.id)}">${icons.trash}<span>Desinstalar</span></button>
+    ${installed.installSource === 'system' ? '' : `<button class="btn btn-danger" type="button" data-action="uninstall" data-app-id="${escapeAttr(appInfo.id)}">${icons.trash}<span>Desinstalar</span></button>`}
   `;
 }
 
 function renderProgress(progress) {
+  const indeterminate = progress.indeterminate || !Number.isFinite(progress.percent);
+  const percent = indeterminate ? 42 : Math.max(0, Math.min(100, progress.percent || 0));
+
   return `
     <div class="progress-block">
-      <div class="progress-line"><div class="progress-fill" style="width: ${Math.max(0, Math.min(100, progress.percent || 0))}%"></div></div>
+      <div class="progress-line ${indeterminate ? 'is-indeterminate' : ''}"><div class="progress-fill" style="width: ${percent}%"></div></div>
       <div class="progress-text">${escapeHtml(progress.message || 'Processando')}</div>
     </div>
   `;

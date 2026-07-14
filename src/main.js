@@ -232,13 +232,323 @@ function installedForRenderer(records) {
       versionName: record.versionName,
       fileName: record.fileName,
       exePath: record.exePath,
+      shortcutPath: record.shortcutPath,
       appDir: record.appDir,
       dataDir: record.dataDir,
       installMode: record.installMode || 'managed',
+      installSource: record.installSource || 'managed',
+      canUninstall: record.installSource !== 'system',
       installedAt: record.installedAt,
       iconUrl
     }];
   }));
+}
+
+function normalizeComparableName(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/\b(setup|installer|install|portable|windows|win|x64|x86|amd64|ia32|latest|release|app|desktop)\b/gi, ' ')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase();
+}
+
+function normalizedWords(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/\b(setup|installer|install|portable|windows|win|x64|x86|amd64|ia32|latest|release|app|desktop)\b/gi, ' ')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter((word) => word.length >= 3);
+}
+
+function appNameCandidates(appInfo) {
+  const names = [
+    appInfo.name,
+    appInfo.repo,
+    appInfo.latest?.fileName,
+    ...(appInfo.versions || []).slice(0, 5).map((version) => version.fileName)
+  ];
+
+  return [...new Set(names
+    .map(normalizeComparableName)
+    .filter((name) => name.length >= 4))];
+}
+
+function scoreInstallEntry(entry, appInfo) {
+  const displayName = entry.DisplayName || entry.displayName || '';
+  const normalizedDisplay = normalizeComparableName(displayName);
+  if (normalizedDisplay.length < 4) return 0;
+
+  const candidates = appNameCandidates(appInfo);
+  let score = 0;
+
+  for (const candidate of candidates) {
+    if (normalizedDisplay === candidate) score = Math.max(score, 100);
+    else if (normalizedDisplay.includes(candidate) && candidate.length >= 5) score = Math.max(score, 88);
+    else if (candidate.includes(normalizedDisplay) && normalizedDisplay.length >= 5) score = Math.max(score, 78);
+  }
+
+  if (score >= 78) return score;
+
+  const displayWords = new Set(normalizedWords(displayName));
+  const appWords = new Set([
+    ...normalizedWords(appInfo.name),
+    ...normalizedWords(appInfo.repo),
+    ...normalizedWords(appInfo.latest?.fileName)
+  ]);
+  const overlap = [...appWords].filter((word) => displayWords.has(word));
+
+  return overlap.length && overlap.length >= Math.min(2, appWords.size) ? 72 : 0;
+}
+
+function extractExePath(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const quoted = text.match(/^"([^"]+?\.exe)"/i);
+  if (quoted) return quoted[1];
+
+  const unquoted = text.match(/([a-z]:\\.*?\.exe)/i);
+  if (unquoted) return unquoted[1].replace(/,+$/, '').trim();
+
+  return '';
+}
+
+async function pathExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findBestExeInDirectory(rootDir, appInfo) {
+  if (!rootDir || !(await pathExists(rootDir))) return '';
+
+  const candidates = appNameCandidates(appInfo);
+  let best = { score: 0, filePath: '' };
+  let visited = 0;
+
+  async function walk(currentDir, depth) {
+    if (depth > 3 || visited > 1400) return;
+
+    let entries = [];
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      visited += 1;
+      const fullPath = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (!/node_modules|resources\\app|locales|swiftshader/i.test(fullPath)) {
+          await walk(fullPath, depth + 1);
+        }
+        continue;
+      }
+
+      if (!entry.isFile() || !isExe(entry.name)) continue;
+      if (/unins|uninstall|update|crash|helper|elevate/i.test(entry.name)) continue;
+
+      const normalizedFile = normalizeComparableName(entry.name);
+      let score = 45;
+      for (const candidate of candidates) {
+        if (normalizedFile === candidate) score = Math.max(score, 98);
+        else if (normalizedFile.includes(candidate) || candidate.includes(normalizedFile)) score = Math.max(score, 82);
+      }
+
+      if (score > best.score) {
+        best = { score, filePath: fullPath };
+      }
+    }
+  }
+
+  await walk(rootDir, 0);
+  return best.score >= 45 ? best.filePath : '';
+}
+
+async function queryWindowsInstallInventory() {
+  if (process.platform !== 'win32') return [];
+
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$items = @()
+$roots = @(
+  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+)
+foreach ($root in $roots) {
+  Get-ItemProperty $root | Where-Object { $_.DisplayName } | ForEach-Object {
+    $items += [pscustomobject]@{
+      Kind = 'registry'
+      DisplayName = $_.DisplayName
+      DisplayVersion = $_.DisplayVersion
+      Publisher = $_.Publisher
+      InstallLocation = $_.InstallLocation
+      DisplayIcon = $_.DisplayIcon
+      UninstallString = $_.UninstallString
+      QuietUninstallString = $_.QuietUninstallString
+      TargetPath = ''
+      ShortcutPath = ''
+    }
+  }
+}
+$shortcutRoots = @(
+  "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs",
+  "$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs",
+  "$env:USERPROFILE\\Desktop",
+  "$env:PUBLIC\\Desktop"
+)
+$wsh = New-Object -ComObject WScript.Shell
+foreach ($root in $shortcutRoots) {
+  if (Test-Path $root) {
+    Get-ChildItem -LiteralPath $root -Filter *.lnk -Recurse | ForEach-Object {
+      $shortcut = $wsh.CreateShortcut($_.FullName)
+      if ($shortcut.TargetPath -and $shortcut.TargetPath.ToLower().EndsWith('.exe')) {
+        $items += [pscustomobject]@{
+          Kind = 'shortcut'
+          DisplayName = $_.BaseName
+          DisplayVersion = ''
+          Publisher = ''
+          InstallLocation = Split-Path $shortcut.TargetPath
+          DisplayIcon = $shortcut.TargetPath
+          UninstallString = ''
+          QuietUninstallString = ''
+          TargetPath = $shortcut.TargetPath
+          ShortcutPath = $_.FullName
+        }
+      }
+    }
+  }
+}
+$items | ConvertTo-Json -Compress -Depth 4
+`;
+
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { windowsHide: true, timeout: 20000, maxBuffer: 12 * 1024 * 1024 }
+    );
+    if (!stdout.trim()) return [];
+    const parsed = JSON.parse(stdout);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (error) {
+    console.warn('Could not query Windows install inventory:', error.message);
+    return [];
+  }
+}
+
+async function resolveSystemExePath(entry, appInfo) {
+  const directPaths = [
+    entry.TargetPath,
+    extractExePath(entry.DisplayIcon),
+    extractExePath(entry.UninstallString)
+  ].filter(Boolean);
+
+  for (const filePath of directPaths) {
+    if (isExe(filePath) && await pathExists(filePath) && !/unins|uninstall/i.test(path.basename(filePath))) {
+      return filePath;
+    }
+  }
+
+  return findBestExeInDirectory(entry.InstallLocation, appInfo);
+}
+
+async function buildSystemInstallRecord(appInfo, entry) {
+  const exePath = await resolveSystemExePath(entry, appInfo);
+  const shortcutPath = entry.ShortcutPath && await pathExists(entry.ShortcutPath) ? entry.ShortcutPath : '';
+  if (!exePath && !shortcutPath) return null;
+
+  const paths = getPaths();
+  const iconPath = exePath
+    ? await extractExeIcon(exePath, path.join(paths.userData, 'system-icons', `${safeSegment(appInfo.id)}.png`))
+    : '';
+
+  return {
+    appId: appInfo.id,
+    name: appInfo.name,
+    owner: appInfo.owner,
+    repo: appInfo.repo,
+    repoUrl: appInfo.repoUrl,
+    versionKey: `system:${entry.DisplayVersion || exePath || shortcutPath}`,
+    versionName: entry.DisplayVersion || 'Instalado no Windows',
+    fileName: path.basename(exePath || shortcutPath),
+    exePath,
+    shortcutPath,
+    appDir: entry.InstallLocation || (exePath ? path.dirname(exePath) : ''),
+    dataDir: '',
+    installMode: 'system',
+    installSource: 'system',
+    displayName: entry.DisplayName,
+    uninstallString: entry.QuietUninstallString || entry.UninstallString || '',
+    iconPath,
+    iconUrl: appInfo.iconUrl,
+    installedAt: new Date().toISOString()
+  };
+}
+
+async function detectSystemInstalledApps(apps) {
+  const inventory = await queryWindowsInstallInventory();
+  const detected = {};
+
+  for (const appInfo of apps) {
+    const best = inventory
+      .map((entry) => ({ entry, score: scoreInstallEntry(entry, appInfo) }))
+      .filter((item) => item.score >= 78)
+      .sort((a, b) => b.score - a.score)[0];
+
+    if (!best) continue;
+
+    const record = await buildSystemInstallRecord(appInfo, best.entry);
+    if (record) {
+      detected[appInfo.id] = record;
+    }
+  }
+
+  return detected;
+}
+
+async function getInstalledForCatalog(apps) {
+  const records = await getInstalledRecords();
+  const nextRecords = { ...records };
+  let changed = false;
+
+  for (const [appId, record] of Object.entries(records)) {
+    if ((record.installSource || 'managed') !== 'system' && record.exePath && !existsSync(record.exePath)) {
+      delete nextRecords[appId];
+      changed = true;
+    }
+  }
+
+  const detected = await detectSystemInstalledApps(apps);
+  for (const appInfo of apps) {
+    const current = nextRecords[appInfo.id];
+    if (current && (current.installSource || 'managed') !== 'system') continue;
+
+    if (detected[appInfo.id]) {
+      nextRecords[appInfo.id] = detected[appInfo.id];
+      changed = true;
+    } else if (current?.installSource === 'system') {
+      delete nextRecords[appInfo.id];
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await writeJson(getPaths().installedFile, nextRecords);
+  }
+
+  return nextRecords;
 }
 
 function cleanRepoName(name) {
@@ -486,43 +796,119 @@ async function refreshCatalog() {
     scannedAt: new Date().toISOString(),
     apps,
     errors,
-    installed: installedForRenderer(await getInstalledRecords()),
+    installed: installedForRenderer(await getInstalledForCatalog(apps)),
     installerPreferences: await getInstallerPreferences()
   };
 }
 
 async function downloadToFile(version, destinationPath, token, onProgress) {
-  const useApiUrl = Boolean(token && version.downloadApiUrl);
-  const url = useApiUrl ? version.downloadApiUrl : version.downloadUrl;
-  const accept = version.source === 'repository'
-    ? 'application/vnd.github.raw'
-    : (useApiUrl ? 'application/octet-stream' : '*/*');
-  const headers = useApiUrl ? githubHeaders(token, accept) : { 'User-Agent': USER_AGENT };
-  const response = await fetch(url, { headers, redirect: 'follow' });
+  const candidates = downloadCandidates(version, token);
+  let response;
+  let lastError = '';
 
-  if (!response.ok) {
-    throw new Error(await responseError(response));
+  for (const candidate of candidates) {
+    response = await fetch(candidate.url, {
+      headers: candidate.headers,
+      redirect: 'follow'
+    });
+
+    if (response.ok) break;
+    lastError = await responseError(response);
+    response = null;
+  }
+
+  if (!response) {
+    throw new Error(lastError || 'Falha ao baixar arquivo.');
   }
 
   await fs.mkdir(path.dirname(destinationPath), { recursive: true });
   const tempPath = `${destinationPath}.download`;
   const total = Number(response.headers.get('content-length')) || version.size || 0;
   let transferred = 0;
+  let lastReportedAt = 0;
+
+  if (typeof onProgress === 'function') {
+    onProgress({
+      transferred,
+      total,
+      percent: total ? 0 : null,
+      indeterminate: !total
+    });
+  }
 
   const stream = Readable.fromWeb(response.body);
   stream.on('data', (chunk) => {
     transferred += chunk.length;
-    if (typeof onProgress === 'function') {
+    const now = Date.now();
+
+    if (typeof onProgress === 'function' && (now - lastReportedAt > 120 || (total && transferred >= total))) {
+      lastReportedAt = now;
       onProgress({
         transferred,
         total,
-        percent: total ? Math.round((transferred / total) * 100) : 0
+        percent: total ? Math.min(100, Math.round((transferred / total) * 100)) : null,
+        indeterminate: !total
       });
     }
   });
 
   await pipeline(stream, createWriteStream(tempPath));
   await fs.rename(tempPath, destinationPath);
+}
+
+function downloadCandidates(version, token) {
+  const authHeaders = token ? githubHeaders(token, 'application/octet-stream') : { 'User-Agent': USER_AGENT };
+
+  if (version.source === 'release') {
+    return [
+      version.downloadUrl && {
+        url: version.downloadUrl,
+        headers: authHeaders
+      },
+      token && version.downloadApiUrl && {
+        url: version.downloadApiUrl,
+        headers: githubHeaders(token, 'application/octet-stream')
+      }
+    ].filter(Boolean);
+  }
+
+  return [
+    !token && version.downloadUrl && {
+      url: version.downloadUrl,
+      headers: { 'User-Agent': USER_AGENT }
+    },
+    version.downloadApiUrl && {
+      url: version.downloadApiUrl,
+      headers: token ? githubHeaders(token, 'application/vnd.github.raw') : { 'User-Agent': USER_AGENT }
+    },
+    version.downloadUrl && {
+      url: version.downloadUrl,
+      headers: authHeaders
+    }
+  ].filter(Boolean);
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let amount = value;
+  let unit = 0;
+
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+
+  return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function downloadProgressMessage(progress, fallback) {
+  if (!progress.total) {
+    return `${fallback} - ${formatBytes(progress.transferred)}`;
+  }
+
+  return `${progress.percent}% - ${formatBytes(progress.transferred)} de ${formatBytes(progress.total)}`;
 }
 
 async function extractExeIcon(exePath, iconPath) {
@@ -614,13 +1000,14 @@ async function installManagedApp(payload, onProgress) {
   await fs.mkdir(versionDir, { recursive: true });
   await fs.mkdir(dataDir, { recursive: true });
 
-  onProgress({ appId: appInfo.id, status: 'downloading', percent: 0, message: 'Baixando' });
+  onProgress({ appId: appInfo.id, status: 'downloading', percent: null, indeterminate: true, message: 'Iniciando download' });
   await downloadToFile(version, exePath, settings.token, (progress) => {
     onProgress({
       appId: appInfo.id,
       status: 'downloading',
       percent: progress.percent,
-      message: progress.total ? `${progress.percent}%` : 'Baixando'
+      indeterminate: progress.indeterminate,
+      message: downloadProgressMessage(progress, 'Baixando')
     });
   });
 
@@ -645,6 +1032,7 @@ async function installManagedApp(payload, onProgress) {
     appDir,
     dataDir,
     installMode: installPreference.mode,
+    installSource: 'managed',
     installerArgs: installPreference.args,
     installerWaitForExit: installPreference.waitForExit,
     iconPath: extractedIconPath,
@@ -668,6 +1056,10 @@ async function uninstallManagedApp(appId) {
     return { removed: false };
   }
 
+  if (record.installSource === 'system') {
+    throw new Error('Este app foi instalado fora do Hub. Use o desinstalador do Windows para remover.');
+  }
+
   assertInside(paths.installRoot, record.appDir);
   assertInside(paths.appDataRoot, record.dataDir);
 
@@ -686,22 +1078,32 @@ async function openManagedApp(appId) {
   const installed = await getInstalledRecords();
   const record = installed[appId];
 
-  if (!record || !existsSync(record.exePath)) {
+  if (!record) {
     throw new Error('Aplicativo instalado nao encontrado.');
   }
 
-  const child = spawn(record.exePath, [], {
-    cwd: path.dirname(record.exePath),
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      MADIAZNX_APP_DATA_DIR: record.dataDir
-    }
-  });
+  if (record.exePath && existsSync(record.exePath)) {
+    const child = spawn(record.exePath, [], {
+      cwd: path.dirname(record.exePath),
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        MADIAZNX_APP_DATA_DIR: record.dataDir || ''
+      }
+    });
 
-  child.unref();
-  return { opened: true };
+    child.unref();
+    return { opened: true };
+  }
+
+  if (record.shortcutPath && existsSync(record.shortcutPath)) {
+    const error = await shell.openPath(record.shortcutPath);
+    if (!error) return { opened: true };
+    throw new Error(error);
+  }
+
+  throw new Error('Aplicativo instalado nao encontrado.');
 }
 
 async function downloadVersion(payload, onProgress) {
@@ -721,13 +1123,14 @@ async function downloadVersion(payload, onProgress) {
     return { canceled: true };
   }
 
-  onProgress({ appId: appInfo.id, status: 'downloading', percent: 0, message: 'Baixando versao' });
+  onProgress({ appId: appInfo.id, status: 'downloading', percent: null, indeterminate: true, message: 'Iniciando download' });
   await downloadToFile(version, result.filePath, settings.token, (progress) => {
     onProgress({
       appId: appInfo.id,
       status: 'downloading',
       percent: progress.percent,
-      message: progress.total ? `${progress.percent}%` : 'Baixando versao'
+      indeterminate: progress.indeterminate,
+      message: downloadProgressMessage(progress, 'Baixando versao')
     });
   });
   onProgress({ appId: appInfo.id, status: 'done', percent: 100, message: 'Baixado' });
