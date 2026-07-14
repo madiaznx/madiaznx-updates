@@ -18,6 +18,7 @@ npm.cmd run build
 ```
 
 O instalador sai em `dist\MadiaznX-Hub-Setup.exe`. Esse nome fica estavel para poder usar sempre o mesmo link de download no GitHub.
+Tambem e criada uma copia com versao, por exemplo `dist\MadiaznX-Hub-Setup-v0.1.0.exe`.
 
 ## Publicar atualizacoes do Hub
 

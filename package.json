@@ -12,8 +12,8 @@
   "scripts": {
     "start": "electron .",
     "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer/app.js",
-    "build": "electron-builder --win nsis --x64",
-    "publish": "electron-builder --win nsis --x64 --publish always"
+    "build": "electron-builder --win nsis --x64 && node scripts/prepare-release-assets.js",
+    "publish": "npm run build && node scripts/publish-release.js"
   },
   "keywords": [
     "madiaznx",
