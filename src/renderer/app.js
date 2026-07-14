@@ -8,6 +8,7 @@ const state = {
   installerPreferences: {},
   errors: [],
   scannedAt: '',
+  fromCache: false,
   loading: false,
   selectedApp: null,
   installerApp: null,
@@ -49,7 +50,7 @@ async function init() {
     state.installed = initial.installed || {};
     state.installerPreferences = initial.installerPreferences || {};
     hydrateSettings();
-    await refreshCatalog();
+    await refreshCatalog({ force: false });
   } catch (error) {
     showToast(error.message, 'error');
     render();
@@ -83,7 +84,7 @@ function cacheElements() {
 }
 
 function bindEvents() {
-  elements.refreshButton.addEventListener('click', refreshCatalog);
+  elements.refreshButton.addEventListener('click', () => refreshCatalog({ force: true }));
   elements.themeButton.addEventListener('click', toggleTheme);
   elements.saveSettingsButton.addEventListener('click', saveSettings);
   elements.appsList.addEventListener('click', handleAppAction);
@@ -123,7 +124,7 @@ function hydrateSettings() {
   const settings = state.settings || {};
   elements.ownerInput.value = settings.owner || 'MadiaznX';
   elements.tokenInput.value = settings.token || '';
-  elements.scanRepositoryFilesInput.checked = settings.scanRepositoryFiles !== false;
+  elements.scanRepositoryFilesInput.checked = settings.scanRepositoryFiles === true;
 }
 
 async function saveSettings() {
@@ -135,7 +136,7 @@ async function saveSettings() {
       scanRepositoryFiles: elements.scanRepositoryFilesInput.checked
     });
     showToast('Configurações salvas.', 'success');
-    await refreshCatalog();
+    await refreshCatalog({ force: true });
   } catch (error) {
     showToast(error.message, 'error');
   } finally {
@@ -144,19 +145,21 @@ async function saveSettings() {
   }
 }
 
-async function refreshCatalog() {
+async function refreshCatalog(options = {}) {
   state.loading = true;
   render();
 
   try {
-    const catalog = await hub.refreshCatalog();
+    const catalog = await hub.refreshCatalog(options);
     state.apps = catalog.apps || [];
     state.installed = catalog.installed || {};
     state.installerPreferences = catalog.installerPreferences || state.installerPreferences;
     state.errors = catalog.errors || [];
     state.scannedAt = catalog.scannedAt || new Date().toISOString();
+    state.fromCache = Boolean(catalog.fromCache);
   } catch (error) {
     state.errors = [{ repo: 'GitHub', message: error.message }];
+    state.fromCache = false;
     showToast(error.message, 'error');
   } finally {
     state.loading = false;
@@ -192,8 +195,9 @@ function renderTopButtons() {
 
   const count = state.apps.length;
   const label = count === 1 ? '1 app encontrado' : `${count} apps encontrados`;
+  const cacheLabel = state.fromCache ? 'cache local' : 'GitHub';
   elements.headlineStatus.textContent = state.scannedAt
-    ? `${label} • ${formatDateTime(state.scannedAt)}`
+    ? `${label} • ${cacheLabel} • ${formatDateTime(state.scannedAt)}`
     : label;
 }
 

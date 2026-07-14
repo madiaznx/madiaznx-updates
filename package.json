@@ -1,6 +1,6 @@
 {
   "name": "madiaznx-hub",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "App local para instalar, atualizar e baixar executaveis publicados nos repositorios GitHub da MadiaznX.",
   "main": "src/main.js",

@@ -22,6 +22,7 @@ const DEFAULT_OWNER = 'MadiaznX';
 const GITHUB_API_VERSION = '2022-11-28';
 const USER_AGENT = 'MadiaznX-Hub';
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
+const CATALOG_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const IMAGE_MIME = new Map([
   ['.png', 'image/png'],
   ['.jpg', 'image/jpeg'],
@@ -49,6 +50,7 @@ function getPaths() {
     settingsFile: path.join(userData, 'settings.json'),
     installedFile: path.join(userData, 'installed.json'),
     installerPreferencesFile: path.join(userData, 'installer-preferences.json'),
+    catalogCacheFile: path.join(userData, 'catalog-cache.json'),
     installRoot: path.join(localAppData, APP_NAME, 'apps'),
     appDataRoot: path.join(userData, 'app-data')
   };
@@ -133,6 +135,30 @@ async function responseError(response) {
   return message;
 }
 
+function isRateLimitResponse(response, message) {
+  return (
+    response.status === 429 ||
+    response.headers.get('x-ratelimit-remaining') === '0' ||
+    /rate limit|api rate limit|secondary rate/i.test(message || '')
+  );
+}
+
+function rateLimitError(response, message) {
+  const resetSeconds = Number(response.headers.get('x-ratelimit-reset') || 0);
+  const resetAt = resetSeconds ? new Date(resetSeconds * 1000).toISOString() : '';
+  const error = new Error(
+    resetAt
+      ? `Limite da API do GitHub atingido. Tente de novo depois de ${new Date(resetAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ou salve um token do GitHub.`
+      : 'Limite da API do GitHub atingido. Salve um token do GitHub para aumentar o limite.'
+  );
+
+  error.code = 'GITHUB_RATE_LIMIT';
+  error.isRateLimit = true;
+  error.resetAt = resetAt;
+  error.githubMessage = message;
+  return error;
+}
+
 async function fetchJson(url, token) {
   const response = await fetch(url, {
     headers: githubHeaders(token),
@@ -140,7 +166,11 @@ async function fetchJson(url, token) {
   });
 
   if (!response.ok) {
-    throw new Error(await responseError(response));
+    const message = await responseError(response);
+    if (isRateLimitResponse(response, message)) {
+      throw rateLimitError(response, message);
+    }
+    throw new Error(message);
   }
 
   return {
@@ -175,7 +205,7 @@ async function getSettings() {
   return {
     owner: stored.owner || DEFAULT_OWNER,
     token: stored.token || '',
-    scanRepositoryFiles: stored.scanRepositoryFiles !== false
+    scanRepositoryFiles: stored.scanRepositoryFiles === true
   };
 }
 
@@ -197,6 +227,45 @@ async function getInstalledRecords() {
 
 async function getInstallerPreferences() {
   return readJson(getPaths().installerPreferencesFile, {});
+}
+
+async function getCatalogCache() {
+  return readJson(getPaths().catalogCacheFile, null);
+}
+
+async function saveCatalogCache(catalog) {
+  await writeJson(getPaths().catalogCacheFile, {
+    owner: catalog.owner,
+    scannedAt: catalog.scannedAt,
+    apps: catalog.apps || [],
+    errors: catalog.errors || []
+  });
+}
+
+function isFreshCatalogCache(cache, owner) {
+  if (!cache || !Array.isArray(cache.apps) || cache.owner !== owner || !cache.scannedAt) {
+    return false;
+  }
+
+  return Date.now() - (Date.parse(cache.scannedAt) || 0) < CATALOG_CACHE_MAX_AGE_MS;
+}
+
+function rateLimitNotice(error, usedCache) {
+  const reset = error.resetAt
+    ? ` Tente de novo depois de ${new Date(error.resetAt).toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    })}.`
+    : '';
+
+  return {
+    repo: 'GitHub',
+    message: usedCache
+      ? `Limite da API atingido; mostrando cache local.${reset} Salve um token para evitar isso.`
+      : `Limite da API atingido.${reset} Salve um token do GitHub nas configurações do Hub.`
+  };
 }
 
 function normalizeInstallerPreference(preference = {}) {
@@ -702,16 +771,14 @@ async function scanRepo(repo, settings) {
   let treeIconUrl = '';
   let treeVersions = [];
 
-  if (settings.scanRepositoryFiles || releaseVersions.length > 0) {
+  if (settings.scanRepositoryFiles && releaseVersions.length === 0) {
     try {
       tree = await fetchRepoTree(repo, token);
       treeIconUrl = await iconFromTree(repo, token, tree);
 
-      if (settings.scanRepositoryFiles && releaseVersions.length === 0) {
-        treeVersions = tree
-          .filter((item) => item.type === 'blob' && isExe(item.path))
-          .map((item) => treeFileToVersion(repo, item));
-      }
+      treeVersions = tree
+        .filter((item) => item.type === 'blob' && isExe(item.path))
+        .map((item) => treeFileToVersion(repo, item));
     } catch (error) {
       if (releaseVersions.length === 0) {
         throw error;
@@ -770,35 +837,75 @@ async function mapLimit(items, limit, iteratee) {
   return results;
 }
 
-async function refreshCatalog() {
-  const settings = await getSettings();
-  const repos = await loadRepos(settings.owner, settings.token);
-  const scanned = await mapLimit(repos, 4, (repo) => scanRepo(repo, settings));
-  const apps = [];
-  const errors = [];
+async function catalogForRenderer(catalog, extraErrors = []) {
+  return {
+    owner: catalog.owner,
+    scannedAt: catalog.scannedAt,
+    apps: catalog.apps || [],
+    errors: [...(catalog.errors || []), ...extraErrors],
+    installed: installedForRenderer(await getInstalledForCatalog(catalog.apps || [])),
+    installerPreferences: await getInstallerPreferences(),
+    fromCache: Boolean(catalog.fromCache)
+  };
+}
 
-  for (const result of scanned) {
-    if (!result) continue;
-    if (result.error) {
-      errors.push({
-        repo: result.item ? `${result.item.owner.login}/${result.item.name}` : 'repositorio',
-        message: result.error.message
-      });
-      continue;
-    }
-    apps.push(result);
+async function refreshCatalog(_event, options = {}) {
+  const settings = await getSettings();
+  const cache = await getCatalogCache();
+  const force = Boolean(options.force);
+
+  if (!settings.token && !force && isFreshCatalogCache(cache, settings.owner)) {
+    return catalogForRenderer({ ...cache, fromCache: true });
   }
 
-  apps.sort((a, b) => compareVersions(a.latest, b.latest));
+  try {
+    const repos = await loadRepos(settings.owner, settings.token);
+    const scanned = await mapLimit(repos, settings.token ? 4 : 2, (repo) => scanRepo(repo, settings));
+    const apps = [];
+    const errors = [];
 
-  return {
-    owner: settings.owner,
-    scannedAt: new Date().toISOString(),
-    apps,
-    errors,
-    installed: installedForRenderer(await getInstalledForCatalog(apps)),
-    installerPreferences: await getInstallerPreferences()
-  };
+    for (const result of scanned) {
+      if (!result) continue;
+      if (result.error) {
+        if (result.error.isRateLimit) {
+          throw result.error;
+        }
+        errors.push({
+          repo: result.item ? `${result.item.owner.login}/${result.item.name}` : 'repositorio',
+          message: result.error.message
+        });
+        continue;
+      }
+      apps.push(result);
+    }
+
+    apps.sort((a, b) => compareVersions(a.latest, b.latest));
+
+    const catalog = {
+      owner: settings.owner,
+      scannedAt: new Date().toISOString(),
+      apps,
+      errors
+    };
+
+    await saveCatalogCache(catalog);
+    return catalogForRenderer(catalog);
+  } catch (error) {
+    if (error.isRateLimit && cache && cache.owner === settings.owner && Array.isArray(cache.apps)) {
+      return catalogForRenderer(
+        { ...cache, fromCache: true },
+        [rateLimitNotice(error, true)]
+      );
+    }
+
+    if (error.isRateLimit) {
+      const friendly = new Error(rateLimitNotice(error, false).message);
+      friendly.code = error.code;
+      throw friendly;
+    }
+
+    throw error;
+  }
 }
 
 async function downloadToFile(version, destinationPath, token, onProgress) {

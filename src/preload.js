@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('madiaznxHub', {
   getState: () => ipcRenderer.invoke('state:get'),
-  refreshCatalog: () => ipcRenderer.invoke('catalog:refresh'),
+  refreshCatalog: (options) => ipcRenderer.invoke('catalog:refresh', options),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   saveInstallerPreference: (appId, preference) => ipcRenderer.invoke('installer-preferences:save', { appId, preference }),
   installApp: (appInfo, version) => ipcRenderer.invoke('apps:install', { appInfo, version }),
