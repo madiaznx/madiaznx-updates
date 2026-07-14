@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' data: https: file:; script-src 'self'; style-src 'self'; img-src 'self' data: https: file:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MadiaznX Hub</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-logo" src="../../assets/logo-madiaznx.png" alt="MadiaznX" />
+          <div class="brand-copy">
+            <h1>MadiaznX Hub</h1>
+            <p id="headlineStatus">Sincronizando com o GitHub</p>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <button class="icon-button" id="refreshButton" type="button" title="Atualizar lista" aria-label="Atualizar lista"></button>
+          <button class="icon-button" id="themeButton" type="button" title="Alternar tema" aria-label="Alternar tema"></button>
+        </div>
+      </header>
+
+      <section class="settings-band">
+        <label class="field">
+          <span>GitHub</span>
+          <input id="ownerInput" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="field token-field">
+          <span>Token</span>
+          <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="check-field">
+          <input id="scanRepositoryFilesInput" type="checkbox" />
+          <span>Procurar .exe no código</span>
+        </label>
+        <button class="btn btn-primary" id="saveSettingsButton" type="button"></button>
+      </section>
+
+      <main class="content">
+        <div class="notice" id="notice" hidden></div>
+        <section class="apps-list" id="appsList" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <dialog class="versions-dialog" id="versionsDialog">
+      <div class="dialog-head">
+        <div>
+          <h2 id="versionsTitle">Versões</h2>
+          <p id="versionsSubtitle"></p>
+        </div>
+        <button class="icon-button" id="closeVersionsButton" type="button" title="Fechar" aria-label="Fechar"></button>
+      </div>
+      <div class="versions-list" id="versionsList"></div>
+    </dialog>
+
+    <dialog class="versions-dialog installer-dialog" id="installerDialog">
+      <div class="dialog-head">
+        <div>
+          <h2 id="installerTitle">Opções do instalador</h2>
+          <p id="installerSubtitle"></p>
+        </div>
+        <button class="icon-button" id="closeInstallerButton" type="button" title="Fechar" aria-label="Fechar"></button>
+      </div>
+      <form class="installer-form" id="installerForm" method="dialog">
+        <fieldset class="mode-grid">
+          <legend>Modo</legend>
+          <label class="mode-option">
+            <input type="radio" name="installerMode" value="managed" />
+            <span>Gerenciado pelo Hub</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="installerMode" value="run" />
+            <span>Executar instalador</span>
+          </label>
+        </fieldset>
+
+        <label class="field">
+          <span>Argumentos</span>
+          <input id="installerArgsInput" type="text" autocomplete="off" spellcheck="false" placeholder="/S" />
+        </label>
+
+        <label class="check-field installer-check">
+          <input id="waitForExitInput" type="checkbox" />
+          <span>Aguardar finalizar</span>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="btn btn-neutral" id="saveInstallerOptionsButton" type="submit"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

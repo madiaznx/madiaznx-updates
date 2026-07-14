@@ -1,0 +1,76 @@
+{
+  "name": "madiaznx-hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "App local para instalar, atualizar e baixar executaveis publicados nos repositorios GitHub da MadiaznX.",
+  "main": "src/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/madiaznx/madiaznx-updates.git"
+  },
+  "homepage": "https://github.com/madiaznx/madiaznx-updates",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer/app.js",
+    "build": "electron-builder --win nsis --x64",
+    "publish": "electron-builder --win nsis --x64 --publish always"
+  },
+  "keywords": [
+    "madiaznx",
+    "github",
+    "updater",
+    "electron"
+  ],
+  "author": "MadiaznX",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^43.1.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.madiaznx.hub",
+    "productName": "MadiaznX Hub",
+    "artifactName": "MadiaznX-Hub-Setup.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "MadiaznX Hub",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "madiaznx",
+        "repo": "madiaznx-updates",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
