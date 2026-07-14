@@ -249,6 +249,14 @@ function hasUpdateAvailable(installed, latest) {
   return true;
 }
 
+function noUpdateActionLabel(installed, latest) {
+  if (installed?.installSource !== 'system') return 'Atualizado';
+
+  const installedVersion = normalizedVersion(installed.versionName);
+  const latestVersion = normalizedVersion(latest?.versionName);
+  return installedVersion && latestVersion ? 'Atualizado' : 'Instalado';
+}
+
 function renderAppCard(appInfo) {
   const installed = state.installed[appInfo.id];
   const latest = appInfo.latest;
@@ -299,7 +307,7 @@ function renderActions(appInfo, installed, hasUpdate) {
 
   return `
     <button class="btn btn-soft" type="button" data-action="open" data-app-id="${escapeAttr(appInfo.id)}">${icons.play}<span>Abrir</span></button>
-    ${hasUpdate ? `<button class="btn btn-primary" type="button" data-action="update" data-app-id="${escapeAttr(appInfo.id)}">${icons.update}<span>Atualizar</span></button>` : `<span class="state-pill installed">${icons.check}<span>Atualizado</span></span>`}
+    ${hasUpdate ? `<button class="btn btn-primary" type="button" data-action="update" data-app-id="${escapeAttr(appInfo.id)}">${icons.update}<span>Atualizar</span></button>` : `<span class="state-pill installed">${icons.check}<span>${noUpdateActionLabel(installed, appInfo.latest)}</span></span>`}
     <button class="btn btn-neutral" type="button" data-action="versions" data-app-id="${escapeAttr(appInfo.id)}">${icons.versions}<span>Versões</span></button>
     <button class="btn btn-soft" type="button" data-action="installer-options" data-app-id="${escapeAttr(appInfo.id)}" title="Opções do instalador">${icons.gear}</button>
     ${installed.installSource === 'system' ? '' : `<button class="btn btn-danger" type="button" data-action="uninstall" data-app-id="${escapeAttr(appInfo.id)}">${icons.trash}<span>Desinstalar</span></button>`}
