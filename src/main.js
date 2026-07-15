@@ -615,6 +615,10 @@ async function detectInstalledAppForRecord(record) {
 
   if (!systemRecord) return null;
 
+  return mergeInstallerMetadata(systemRecord, record);
+}
+
+function mergeInstallerMetadata(systemRecord, record) {
   return {
     ...systemRecord,
     installerPath: record.installerPath || record.exePath || '',
@@ -646,7 +650,13 @@ async function getInstalledForCatalog(apps) {
   const detected = await detectSystemInstalledApps(apps);
   for (const appInfo of apps) {
     const current = nextRecords[appInfo.id];
-    if (current && (current.installSource || 'managed') !== 'system') continue;
+    if (current && (current.installSource || 'managed') !== 'system') {
+      if (shouldResolveInstalledAppBeforeOpen(current) && detected[appInfo.id]) {
+        nextRecords[appInfo.id] = mergeInstallerMetadata(detected[appInfo.id], current);
+        changed = true;
+      }
+      continue;
+    }
 
     if (detected[appInfo.id]) {
       nextRecords[appInfo.id] = detected[appInfo.id];
