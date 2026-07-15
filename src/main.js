@@ -306,7 +306,7 @@ function installedForRenderer(records) {
       dataDir: record.dataDir,
       installMode: record.installMode || 'managed',
       installSource: record.installSource || 'managed',
-      canUninstall: record.installSource !== 'system',
+      canUninstall: record.installSource !== 'system' || Boolean(record.uninstallString),
       installedAt: record.installedAt,
       iconUrl
     }];
@@ -559,6 +559,7 @@ async function buildSystemInstallRecord(appInfo, entry) {
     installMode: 'system',
     installSource: 'system',
     displayName: entry.DisplayName,
+    quietUninstallString: entry.QuietUninstallString || '',
     uninstallString: entry.QuietUninstallString || entry.UninstallString || '',
     iconPath,
     iconUrl: appInfo.iconUrl,
@@ -1095,6 +1096,56 @@ function splitCommandLineArgs(input) {
   return args;
 }
 
+function normalizeMsiUninstallArgs(command, args) {
+  if (!/msiexec(?:\.exe)?$/i.test(command)) {
+    return args;
+  }
+
+  const normalized = args.length ? [...args] : [];
+  const installIndex = normalized.findIndex((arg) => /^\/i/i.test(arg));
+
+  if (installIndex >= 0) {
+    normalized[installIndex] = normalized[installIndex].replace(/^\/i/i, '/X');
+  } else if (!normalized.some((arg) => /^\/x/i.test(arg))) {
+    normalized.unshift('/X');
+  }
+
+  return normalized;
+}
+
+function expandWindowsEnvVars(value) {
+  return String(value || '').replace(/%([^%]+)%/g, (_match, name) => process.env[name] || process.env[name.toUpperCase()] || '');
+}
+
+async function runExternalUninstaller(record) {
+  const commandLine = record.uninstallString || record.quietUninstallString || '';
+  const parts = splitCommandLineArgs(commandLine);
+
+  if (!parts.length) {
+    throw new Error('Este app nao informou um desinstalador no Windows.');
+  }
+
+  const command = expandWindowsEnvVars(parts.shift());
+  const args = normalizeMsiUninstallArgs(command, parts.map(expandWindowsEnvVars));
+  const child = spawn(command, args, {
+    cwd: record.appDir && existsSync(record.appDir) ? record.appDir : undefined,
+    detached: false,
+    stdio: 'ignore',
+    windowsHide: false
+  });
+
+  await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0 || code === null || code === 3010) {
+        resolve();
+        return;
+      }
+      reject(new Error(`Desinstalador finalizou com codigo ${code}.`));
+    });
+  });
+}
+
 async function runDownloadedInstaller(exePath, preference) {
   const args = splitCommandLineArgs(preference.args);
   const child = spawn(exePath, args, {
@@ -1199,7 +1250,10 @@ async function uninstallManagedApp(appId) {
   }
 
   if (record.installSource === 'system') {
-    throw new Error('Este app foi instalado fora do Hub. Use o desinstalador do Windows para remover.');
+    await runExternalUninstaller(record);
+    delete installed[appId];
+    await writeJson(paths.installedFile, installed);
+    return { removed: true, external: true };
   }
 
   assertInside(paths.installRoot, record.appDir);

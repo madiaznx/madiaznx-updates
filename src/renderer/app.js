@@ -314,7 +314,7 @@ function renderActions(appInfo, installed, hasUpdate) {
     ${hasUpdate ? `<button class="btn btn-primary" type="button" data-action="update" data-app-id="${escapeAttr(appInfo.id)}">${icons.update}<span>Atualizar</span></button>` : `<span class="state-pill installed">${icons.check}<span>${noUpdateActionLabel(installed, appInfo.latest)}</span></span>`}
     <button class="btn btn-neutral" type="button" data-action="versions" data-app-id="${escapeAttr(appInfo.id)}">${icons.versions}<span>Versões</span></button>
     <button class="btn btn-soft" type="button" data-action="installer-options" data-app-id="${escapeAttr(appInfo.id)}" title="Opções do instalador">${icons.gear}</button>
-    ${installed.installSource === 'system' ? '' : `<button class="btn btn-danger" type="button" data-action="uninstall" data-app-id="${escapeAttr(appInfo.id)}">${icons.trash}<span>Desinstalar</span></button>`}
+    ${installed.canUninstall ? `<button class="btn btn-danger" type="button" data-action="uninstall" data-app-id="${escapeAttr(appInfo.id)}">${icons.trash}<span>Desinstalar</span></button>` : ''}
   `;
 }
 
@@ -476,7 +476,11 @@ async function saveInstallerOptions(event) {
 }
 
 async function uninstallApp(appInfo) {
-  const confirmed = confirm(`Desinstalar ${appInfo.name}?`);
+  const installed = state.installed[appInfo.id];
+  const detail = installed?.installSource === 'system'
+    ? 'O desinstalador oficial do Windows será aberto.'
+    : 'As pastas gerenciadas pelo Hub serão removidas.';
+  const confirmed = confirm(`Desinstalar ${appInfo.name}?\n\n${detail}`);
   if (!confirmed) return;
 
   try {
