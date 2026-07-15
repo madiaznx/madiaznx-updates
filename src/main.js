@@ -664,6 +664,42 @@ function scoreExeAssetName(name) {
   return score;
 }
 
+function versionTokens(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^v/, '')
+    .match(/\d+(?:[.-]\d+){0,4}(?:[-.][a-z0-9]+)?/g) || [];
+}
+
+function scoreReleaseExeAsset(release, asset) {
+  const name = String(asset.name || '').toLowerCase();
+  const releaseTokens = [
+    ...versionTokens(release.tag_name),
+    ...versionTokens(release.name)
+  ].filter(Boolean);
+  let score = scoreExeAssetName(name);
+
+  if (releaseTokens.some((token) => name.includes(token))) score += 80;
+  if (/v?\d+(?:\.\d+){1,4}/.test(name)) score += 35;
+  if (/latest|stable|download/i.test(name)) score -= 18;
+  if (/setup\.exe$/i.test(name) && !/v?\d/.test(name)) score -= 24;
+
+  return score;
+}
+
+function selectReleaseExeAssets(release) {
+  const exeAssets = (release.assets || []).filter((asset) => isExe(asset.name));
+  if (exeAssets.length <= 1) return exeAssets;
+
+  return [exeAssets
+    .slice()
+    .sort((a, b) => {
+      const scoreDelta = scoreReleaseExeAsset(release, b) - scoreReleaseExeAsset(release, a);
+      if (scoreDelta) return scoreDelta;
+      return (b.size || 0) - (a.size || 0);
+    })[0]];
+}
+
 function compareVersions(a, b) {
   const dateA = Date.parse(a.createdAt || '') || 0;
   const dateB = Date.parse(b.createdAt || '') || 0;
@@ -762,8 +798,7 @@ async function scanRepo(repo, settings) {
   const visibleReleases = releases.filter((release) => !release.draft);
   const releaseAssets = visibleReleases.flatMap((release) => release.assets || []);
   const releaseVersions = visibleReleases.flatMap((release) => {
-    return (release.assets || [])
-      .filter((asset) => isExe(asset.name))
+    return selectReleaseExeAssets(release)
       .map((asset) => releaseAssetToVersion(repo, release, asset));
   });
 
