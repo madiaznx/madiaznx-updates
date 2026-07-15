@@ -43,6 +43,7 @@ Ao reiniciar, o Hub tenta procurar atualizacao automaticamente. Quando uma atual
 - `Atualizar` aparece em azul quando a versao instalada e diferente da versao mais recente encontrada.
 - `Desinstalar` remove a pasta instalada e a pasta de dados gerenciada daquele app.
 - Apps detectados como instalados pelo Windows tambem podem ser desinstalados quando o Registro informar um desinstalador; nesse caso o Hub chama o desinstalador oficial do app.
+- Quando a opcao de instalador esta em `Executar instalador`, o Hub nao usa o instalador baixado como botao `Abrir`; ele tenta localizar e abrir o app real instalado no Windows.
 - `Versoes` permite instalar ou baixar executaveis anteriores.
 - As opcoes de instalador sao salvas por app. Da para manter o `.exe` gerenciado pelo Hub ou executar o instalador com argumentos como `/S`.
 

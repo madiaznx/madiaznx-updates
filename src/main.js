@@ -301,6 +301,7 @@ function installedForRenderer(records) {
       versionName: record.versionName,
       fileName: record.fileName,
       exePath: record.exePath,
+      installerPath: record.installerPath,
       shortcutPath: record.shortcutPath,
       appDir: record.appDir,
       dataDir: record.dataDir,
@@ -586,6 +587,48 @@ async function detectSystemInstalledApps(apps) {
   }
 
   return detected;
+}
+
+function appInfoFromInstallRecord(record) {
+  return {
+    id: record.appId,
+    name: record.name,
+    owner: record.owner,
+    repo: record.repo,
+    repoUrl: record.repoUrl,
+    iconUrl: record.iconUrl,
+    latest: {
+      fileName: record.fileName,
+      versionName: record.versionName
+    },
+    versions: [{
+      fileName: record.fileName,
+      versionName: record.versionName
+    }]
+  };
+}
+
+async function detectInstalledAppForRecord(record) {
+  const appInfo = appInfoFromInstallRecord(record);
+  const detected = await detectSystemInstalledApps([appInfo]);
+  const systemRecord = detected[record.appId];
+
+  if (!systemRecord) return null;
+
+  return {
+    ...systemRecord,
+    installerPath: record.installerPath || record.exePath || '',
+    installerVersionKey: record.installerVersionKey || record.versionKey,
+    installerVersionName: record.installerVersionName || record.versionName,
+    installedAt: record.installedAt || systemRecord.installedAt
+  };
+}
+
+async function saveInstalledRecord(record) {
+  const installed = await getInstalledRecords();
+  installed[record.appId] = record;
+  await writeJson(getPaths().installedFile, installed);
+  return record;
 }
 
 async function getInstalledForCatalog(apps) {
@@ -1259,6 +1302,33 @@ async function installManagedApp(payload, onProgress) {
   if (installPreference.mode === 'run') {
     onProgress({ appId: appInfo.id, status: 'installing', percent: 100, message: 'Executando instalador' });
     await runDownloadedInstaller(exePath, installPreference);
+
+    onProgress({ appId: appInfo.id, status: 'installing', percent: 100, message: 'Detectando aplicativo instalado' });
+    const detectedRecord = await detectInstalledAppForRecord({
+      appId: appInfo.id,
+      name: appInfo.name,
+      owner: appInfo.owner,
+      repo: appInfo.repo,
+      repoUrl: appInfo.repoUrl,
+      versionKey: version.versionKey,
+      versionName: version.versionName,
+      fileName,
+      exePath,
+      installerPath: exePath,
+      appDir,
+      dataDir,
+      installMode: 'run',
+      installSource: 'installer',
+      iconUrl: appInfo.iconUrl,
+      installedAt: new Date().toISOString()
+    });
+
+    if (detectedRecord) {
+      installed[appInfo.id] = detectedRecord;
+      await writeJson(paths.installedFile, installed);
+      onProgress({ appId: appInfo.id, status: 'done', percent: 100, message: 'Concluido' });
+      return installedForRenderer({ [appInfo.id]: detectedRecord })[appInfo.id];
+    }
   }
 
   const record = {
@@ -1270,11 +1340,12 @@ async function installManagedApp(payload, onProgress) {
     versionKey: version.versionKey,
     versionName: version.versionName,
     fileName,
-    exePath,
+    exePath: installPreference.mode === 'run' ? '' : exePath,
+    installerPath: installPreference.mode === 'run' ? exePath : '',
     appDir,
     dataDir,
     installMode: installPreference.mode,
-    installSource: 'managed',
+    installSource: installPreference.mode === 'run' ? 'installer' : 'managed',
     installerArgs: installPreference.args,
     installerWaitForExit: installPreference.waitForExit,
     iconPath: extractedIconPath,
@@ -1319,14 +1390,7 @@ async function uninstallManagedApp(appId) {
   return { removed: true };
 }
 
-async function openManagedApp(appId) {
-  const installed = await getInstalledRecords();
-  const record = installed[appId];
-
-  if (!record) {
-    throw new Error('Aplicativo instalado nao encontrado.');
-  }
-
+async function launchInstallRecord(record) {
   if (record.exePath && existsSync(record.exePath)) {
     const child = spawn(record.exePath, [], {
       cwd: path.dirname(record.exePath),
@@ -1347,6 +1411,33 @@ async function openManagedApp(appId) {
     if (!error) return { opened: true };
     throw new Error(error);
   }
+
+  return null;
+}
+
+async function openManagedApp(appId) {
+  const installed = await getInstalledRecords();
+  const record = installed[appId];
+
+  if (!record) {
+    throw new Error('Aplicativo instalado nao encontrado.');
+  }
+
+  if (record.installMode === 'run' || record.installSource === 'installer') {
+    const detectedRecord = await detectInstalledAppForRecord(record);
+
+    if (detectedRecord) {
+      installed[appId] = detectedRecord;
+      await writeJson(getPaths().installedFile, installed);
+      const opened = await launchInstallRecord(detectedRecord);
+      if (opened) return opened;
+    }
+
+    throw new Error('O instalador foi baixado, mas o app instalado ainda nao foi localizado no Windows.');
+  }
+
+  const opened = await launchInstallRecord(record);
+  if (opened) return opened;
 
   throw new Error('Aplicativo instalado nao encontrado.');
 }
