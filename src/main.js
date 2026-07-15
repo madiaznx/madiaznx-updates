@@ -299,6 +299,7 @@ function installedForRenderer(records) {
       repoUrl: record.repoUrl,
       versionKey: record.versionKey,
       versionName: record.versionName,
+      versionSource: record.versionSource || '',
       fileName: record.fileName,
       exePath: record.exePath,
       installerPath: record.installerPath,
@@ -394,6 +395,43 @@ async function pathExists(filePath) {
     return true;
   } catch {
     return false;
+  }
+}
+
+function normalizeDetectedVersion(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const match = text.match(/\d+(?:[.,]\d+){0,4}(?:[-+][a-z0-9.-]+)?/i);
+  return match ? match[0].replace(/,/g, '.') : text;
+}
+
+async function readExecutableVersion(filePath) {
+  if (process.platform !== 'win32' || !filePath || !(await pathExists(filePath))) return '';
+
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$item = Get-Item -LiteralPath $args[0]
+if ($null -eq $item) { exit 0 }
+$info = $item.VersionInfo
+[pscustomobject]@{
+  ProductVersion = $info.ProductVersion
+  FileVersion = $info.FileVersion
+} | ConvertTo-Json -Compress
+`;
+
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script, filePath],
+      { windowsHide: true, timeout: 8000, maxBuffer: 512 * 1024 }
+    );
+    if (!stdout.trim()) return '';
+    const info = JSON.parse(stdout);
+    return normalizeDetectedVersion(info.ProductVersion) || normalizeDetectedVersion(info.FileVersion);
+  } catch (error) {
+    console.warn(`Could not read executable version from ${filePath}:`, error.message);
+    return '';
   }
 }
 
@@ -543,6 +581,9 @@ async function buildSystemInstallRecord(appInfo, entry) {
   const iconPath = exePath
     ? await extractExeIcon(exePath, path.join(paths.userData, 'system-icons', `${safeSegment(appInfo.id)}.png`))
     : '';
+  const displayVersion = normalizeDetectedVersion(entry.DisplayVersion);
+  const executableVersion = displayVersion ? '' : await readExecutableVersion(exePath);
+  const installedVersion = displayVersion || executableVersion;
 
   return {
     appId: appInfo.id,
@@ -550,8 +591,9 @@ async function buildSystemInstallRecord(appInfo, entry) {
     owner: appInfo.owner,
     repo: appInfo.repo,
     repoUrl: appInfo.repoUrl,
-    versionKey: `system:${entry.DisplayVersion || exePath || shortcutPath}`,
-    versionName: entry.DisplayVersion || 'Instalado no Windows',
+    versionKey: `system:${installedVersion || exePath || shortcutPath}`,
+    versionName: installedVersion || 'Instalado no Windows',
+    versionSource: displayVersion ? 'registry' : (executableVersion ? 'exe' : ''),
     fileName: path.basename(exePath || shortcutPath),
     exePath,
     shortcutPath,
@@ -1289,6 +1331,8 @@ async function installManagedApp(payload, onProgress) {
   const { appInfo, version = appInfo.latest } = payload;
   const paths = getPaths();
   const installed = await getInstalledRecords();
+  const existingRecord = installed[appInfo.id];
+  const existingIsSystemInstall = existingRecord?.installSource === 'system';
   const installerPreferences = await getInstallerPreferences();
   const installPreference = normalizeInstallerPreference(installerPreferences[appInfo.id]);
   const appDir = path.join(paths.installRoot, safeSegment(appInfo.id));
@@ -1296,7 +1340,7 @@ async function installManagedApp(payload, onProgress) {
   const dataDir = path.join(paths.appDataRoot, safeSegment(appInfo.id));
   const fileName = safeFileName(version.fileName);
   const downloadedFileIsInstaller = isInstallerFileName(fileName);
-  const effectiveInstallPreference = downloadedFileIsInstaller
+  const effectiveInstallPreference = downloadedFileIsInstaller || existingIsSystemInstall
     ? { ...installPreference, mode: 'run', waitForExit: true }
     : installPreference;
   const exePath = path.join(versionDir, fileName);
@@ -1324,7 +1368,12 @@ async function installManagedApp(payload, onProgress) {
   const extractedIconPath = await extractExeIcon(exePath, iconPath);
 
   if (effectiveInstallPreference.mode === 'run') {
-    onProgress({ appId: appInfo.id, status: 'installing', percent: 100, message: 'Executando instalador' });
+    onProgress({
+      appId: appInfo.id,
+      status: 'installing',
+      percent: 100,
+      message: existingIsSystemInstall ? 'Atualizando pelo instalador' : 'Executando instalador'
+    });
     await runDownloadedInstaller(exePath, effectiveInstallPreference);
 
     onProgress({ appId: appInfo.id, status: 'installing', percent: 100, message: 'Detectando aplicativo instalado' });
@@ -1352,6 +1401,10 @@ async function installManagedApp(payload, onProgress) {
       await writeJson(paths.installedFile, installed);
       onProgress({ appId: appInfo.id, status: 'done', percent: 100, message: 'Concluido' });
       return installedForRenderer({ [appInfo.id]: detectedRecord })[appInfo.id];
+    }
+
+    if (existingIsSystemInstall) {
+      throw new Error('Instalador finalizado, mas o Hub nao conseguiu confirmar a nova versao no Windows.');
     }
   }
 

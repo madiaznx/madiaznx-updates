@@ -236,8 +236,22 @@ function installedLabel(installed) {
 }
 
 function normalizedVersion(value) {
-  const match = String(value || '').toLowerCase().match(/v?(\d+(?:\.\d+){0,3}(?:[-+][a-z0-9.-]+)?)/);
-  return match ? match[1].replace(/^v/, '') : '';
+  const match = String(value || '').toLowerCase().match(/v?(\d+(?:[.,]\d+){0,4}(?:[-+][a-z0-9.-]+)?)/);
+  return match ? match[1].replace(/^v/, '').replace(/,/g, '.') : '';
+}
+
+function comparableVersion(value) {
+  const normalized = normalizedVersion(value).replace(/,/g, '.');
+  if (!normalized) return '';
+
+  const [core, suffix = ''] = normalized.split(/[-+]/, 2);
+  const parts = core.split('.').map((part) => String(Number(part || 0)));
+
+  while (parts.length > 1 && parts[parts.length - 1] === '0') {
+    parts.pop();
+  }
+
+  return `${parts.join('.')}${suffix ? `-${suffix}` : ''}`;
 }
 
 function hasUpdateAvailable(installed, latest) {
@@ -245,8 +259,8 @@ function hasUpdateAvailable(installed, latest) {
   if (installed.versionKey === latest.versionKey) return false;
 
   if (installed.installSource === 'system') {
-    const installedVersion = normalizedVersion(installed.versionName);
-    const latestVersion = normalizedVersion(latest.versionName);
+    const installedVersion = comparableVersion(installed.versionName);
+    const latestVersion = comparableVersion(latest.versionName);
     return Boolean(installedVersion && latestVersion && installedVersion !== latestVersion);
   }
 
@@ -256,8 +270,8 @@ function hasUpdateAvailable(installed, latest) {
 function noUpdateActionLabel(installed, latest) {
   if (installed?.installSource !== 'system') return 'Atualizado';
 
-  const installedVersion = normalizedVersion(installed.versionName);
-  const latestVersion = normalizedVersion(latest?.versionName);
+  const installedVersion = comparableVersion(installed.versionName);
+  const latestVersion = comparableVersion(latest?.versionName);
   return installedVersion && latestVersion ? 'Atualizado' : 'Instalado';
 }
 
@@ -290,6 +304,7 @@ function renderAppCard(appInfo) {
           <span class="meta-chip">${sourceLabel(latest.source)}</span>
           ${installed ? `<span class="meta-chip">Atual: ${escapeHtml(installed.versionName)}</span>` : ''}
           ${installed?.installSource === 'system' ? '<span class="meta-chip">Detectado pelo Windows</span>' : ''}
+          ${installed?.versionSource === 'exe' ? '<span class="meta-chip">VersÃ£o lida do .exe</span>' : ''}
         </div>
       </div>
       <div class="app-actions">
@@ -501,12 +516,13 @@ async function installVersion(appInfo, version) {
 
 function openInstallerDialog(appInfo, pendingAction = null) {
   const targetVersion = pendingAction?.version || appInfo.latest || {};
-  const installerLike = looksLikeInstallerFile(targetVersion.fileName);
-  const fallbackPreference = installerLike
+  const installed = state.installed[appInfo.id];
+  const mustRunInstaller = installed?.installSource === 'system' || looksLikeInstallerFile(targetVersion.fileName);
+  const fallbackPreference = mustRunInstaller
     ? { mode: 'run', args: '', waitForExit: true }
     : { mode: 'managed', args: '', waitForExit: false };
   const savedPreference = state.installerPreferences[appInfo.id] || fallbackPreference;
-  const preference = installerLike
+  const preference = mustRunInstaller
     ? { ...savedPreference, mode: 'run', waitForExit: true }
     : savedPreference;
   state.installerApp = appInfo;
@@ -529,11 +545,12 @@ async function saveInstallerOptions(event) {
   const appInfo = state.installerApp;
   const pending = state.pendingInstallerAction;
   const targetVersion = pending?.version || appInfo.latest || {};
-  const installerLike = looksLikeInstallerFile(targetVersion.fileName);
+  const installed = state.installed[appInfo.id];
+  const mustRunInstaller = installed?.installSource === 'system' || looksLikeInstallerFile(targetVersion.fileName);
   const preference = {
-    mode: installerLike ? 'run' : elements.installerForm.elements.installerMode.value,
+    mode: mustRunInstaller ? 'run' : elements.installerForm.elements.installerMode.value,
     args: elements.installerArgsInput.value,
-    waitForExit: installerLike ? true : elements.waitForExitInput.checked
+    waitForExit: mustRunInstaller ? true : elements.waitForExitInput.checked
   };
 
   try {

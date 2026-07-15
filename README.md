@@ -42,6 +42,8 @@ Ao reiniciar, o Hub tenta procurar atualizacao automaticamente. Quando uma atual
 - `Instalar` baixa o `.exe` para uma pasta gerenciada em `%LOCALAPPDATA%\MadiaznX Hub\apps`. Arquivos com nome de instalador, como `Setup.exe`, sao executados como instalador e nao sao usados pelo botao `Abrir`.
 - `Atualizar` aparece em azul quando a versao instalada e diferente da versao mais recente encontrada.
 - `Desinstalar` remove a pasta instalada e a pasta de dados gerenciada daquele app.
+- Apps detectados como instalados pelo Windows usam a versao do Registro; se ela nao existir, o Hub tenta ler `ProductVersion`/`FileVersion` do `.exe` instalado.
+- Ao atualizar um app detectado pelo Windows, o Hub executa a nova versao como instalador e tenta confirmar a versao instalada de novo antes de trocar o registro local.
 - Apps detectados como instalados pelo Windows tambem podem ser desinstalados quando o Registro informar um desinstalador; nesse caso o Hub chama o desinstalador oficial do app.
 - Quando a opcao de instalador esta em `Executar instalador`, ou quando o arquivo parece um setup, o Hub nao usa o instalador baixado como botao `Abrir`; ele tenta localizar e abrir o app real instalado no Windows.
 - `Versoes` permite instalar ou baixar executaveis anteriores.
