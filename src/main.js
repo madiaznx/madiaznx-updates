@@ -426,7 +426,7 @@ async function findBestExeInDirectory(rootDir, appInfo) {
       }
 
       if (!entry.isFile() || !isExe(entry.name)) continue;
-      if (/unins|uninstall|update|crash|helper|elevate/i.test(entry.name)) continue;
+      if (isInstallerFileName(entry.name) || /unins|uninstall|update|crash|helper|elevate/i.test(entry.name)) continue;
 
       const normalizedFile = normalizeComparableName(entry.name);
       let score = 45;
@@ -526,7 +526,7 @@ async function resolveSystemExePath(entry, appInfo) {
   ].filter(Boolean);
 
   for (const filePath of directPaths) {
-    if (isExe(filePath) && await pathExists(filePath) && !/unins|uninstall/i.test(path.basename(filePath))) {
+    if (isExe(filePath) && await pathExists(filePath) && !isInstallerFileName(filePath) && !/unins|uninstall/i.test(path.basename(filePath))) {
       return filePath;
     }
   }
@@ -678,6 +678,16 @@ function encodedPath(filePath) {
 
 function isExe(name) {
   return /\.exe$/i.test(name || '');
+}
+
+function isInstallerFileName(value) {
+  const cleanValue = String(value || '').trim().replace(/^"|"$/g, '');
+  const name = path.basename(cleanValue).toLowerCase();
+
+  if (!isExe(name) || /unins|uninstall/.test(name)) return false;
+
+  return /(^|[\s._-])(setup|installer|install|bootstrapper)([\s._-]|$)/i.test(name)
+    || /(setup|installer)(?:[\s._-]?v?\d|\.)/i.test(name);
 }
 
 function isIconCandidate(name) {
@@ -1275,6 +1285,10 @@ async function installManagedApp(payload, onProgress) {
   const versionDir = path.join(appDir, safeSegment(version.versionKey));
   const dataDir = path.join(paths.appDataRoot, safeSegment(appInfo.id));
   const fileName = safeFileName(version.fileName);
+  const downloadedFileIsInstaller = isInstallerFileName(fileName);
+  const effectiveInstallPreference = downloadedFileIsInstaller
+    ? { ...installPreference, mode: 'run', waitForExit: true }
+    : installPreference;
   const exePath = path.join(versionDir, fileName);
   const iconPath = path.join(appDir, 'icon.png');
 
@@ -1299,9 +1313,9 @@ async function installManagedApp(payload, onProgress) {
   onProgress({ appId: appInfo.id, status: 'installing', percent: 100, message: 'Preparando' });
   const extractedIconPath = await extractExeIcon(exePath, iconPath);
 
-  if (installPreference.mode === 'run') {
+  if (effectiveInstallPreference.mode === 'run') {
     onProgress({ appId: appInfo.id, status: 'installing', percent: 100, message: 'Executando instalador' });
-    await runDownloadedInstaller(exePath, installPreference);
+    await runDownloadedInstaller(exePath, effectiveInstallPreference);
 
     onProgress({ appId: appInfo.id, status: 'installing', percent: 100, message: 'Detectando aplicativo instalado' });
     const detectedRecord = await detectInstalledAppForRecord({
@@ -1340,14 +1354,14 @@ async function installManagedApp(payload, onProgress) {
     versionKey: version.versionKey,
     versionName: version.versionName,
     fileName,
-    exePath: installPreference.mode === 'run' ? '' : exePath,
-    installerPath: installPreference.mode === 'run' ? exePath : '',
+    exePath: effectiveInstallPreference.mode === 'run' ? '' : exePath,
+    installerPath: effectiveInstallPreference.mode === 'run' ? exePath : '',
     appDir,
     dataDir,
-    installMode: installPreference.mode,
-    installSource: installPreference.mode === 'run' ? 'installer' : 'managed',
-    installerArgs: installPreference.args,
-    installerWaitForExit: installPreference.waitForExit,
+    installMode: effectiveInstallPreference.mode,
+    installSource: effectiveInstallPreference.mode === 'run' ? 'installer' : 'managed',
+    installerArgs: effectiveInstallPreference.args,
+    installerWaitForExit: effectiveInstallPreference.waitForExit,
     iconPath: extractedIconPath,
     iconUrl: appInfo.iconUrl,
     installedAt: new Date().toISOString()
@@ -1391,7 +1405,7 @@ async function uninstallManagedApp(appId) {
 }
 
 async function launchInstallRecord(record) {
-  if (record.exePath && existsSync(record.exePath)) {
+  if (record.exePath && existsSync(record.exePath) && !isInstallerFileName(record.exePath)) {
     const child = spawn(record.exePath, [], {
       cwd: path.dirname(record.exePath),
       detached: true,
@@ -1415,6 +1429,14 @@ async function launchInstallRecord(record) {
   return null;
 }
 
+function shouldResolveInstalledAppBeforeOpen(record) {
+  if (record.installMode === 'run' || record.installSource === 'installer') return true;
+  if ((record.installSource || 'managed') === 'system') return false;
+
+  return isInstallerFileName(record.exePath)
+    || (!record.exePath && isInstallerFileName(record.installerPath || record.fileName));
+}
+
 async function openManagedApp(appId) {
   const installed = await getInstalledRecords();
   const record = installed[appId];
@@ -1423,7 +1445,7 @@ async function openManagedApp(appId) {
     throw new Error('Aplicativo instalado nao encontrado.');
   }
 
-  if (record.installMode === 'run' || record.installSource === 'installer') {
+  if (shouldResolveInstalledAppBeforeOpen(record)) {
     const detectedRecord = await detectInstalledAppForRecord(record);
 
     if (detectedRecord) {

@@ -354,6 +354,15 @@ function encodePath(value) {
   return String(value).split('/').map((segment) => encodeURIComponent(segment)).join('/');
 }
 
+function looksLikeInstallerFile(value) {
+  const name = String(value || '').split(/[\\/]/).pop().toLowerCase();
+
+  if (!/\.exe$/i.test(name) || /unins|uninstall/.test(name)) return false;
+
+  return /(^|[\s._-])(setup|installer|install|bootstrapper)([\s._-]|$)/i.test(name)
+    || /(setup|installer)(?:[\s._-]?v?\d|\.)/i.test(name);
+}
+
 function renderActions(appInfo, installed, hasUpdate) {
   if (!installed) {
     return `
@@ -491,7 +500,15 @@ async function installVersion(appInfo, version) {
 }
 
 function openInstallerDialog(appInfo, pendingAction = null) {
-  const preference = state.installerPreferences[appInfo.id] || { mode: 'managed', args: '', waitForExit: false };
+  const targetVersion = pendingAction?.version || appInfo.latest || {};
+  const installerLike = looksLikeInstallerFile(targetVersion.fileName);
+  const fallbackPreference = installerLike
+    ? { mode: 'run', args: '', waitForExit: true }
+    : { mode: 'managed', args: '', waitForExit: false };
+  const savedPreference = state.installerPreferences[appInfo.id] || fallbackPreference;
+  const preference = installerLike
+    ? { ...savedPreference, mode: 'run', waitForExit: true }
+    : savedPreference;
   state.installerApp = appInfo;
   state.pendingInstallerAction = pendingAction;
   elements.installerTitle.textContent = 'Opções do instalador';
@@ -511,10 +528,12 @@ async function saveInstallerOptions(event) {
 
   const appInfo = state.installerApp;
   const pending = state.pendingInstallerAction;
+  const targetVersion = pending?.version || appInfo.latest || {};
+  const installerLike = looksLikeInstallerFile(targetVersion.fileName);
   const preference = {
-    mode: elements.installerForm.elements.installerMode.value,
+    mode: installerLike ? 'run' : elements.installerForm.elements.installerMode.value,
     args: elements.installerArgsInput.value,
-    waitForExit: elements.waitForExitInput.checked
+    waitForExit: installerLike ? true : elements.waitForExitInput.checked
   };
 
   try {

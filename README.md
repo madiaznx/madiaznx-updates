@@ -39,11 +39,11 @@ Ao reiniciar, o Hub tenta procurar atualizacao automaticamente. Quando uma atual
 - Releases do GitHub sao usadas como fonte principal de versoes.
 - Quando uma release tiver mais de um `.exe`, o Hub mostra apenas um item por versao e prefere o arquivo que contem a versao no nome.
 - Se a opcao estiver marcada, repositorios sem release com `.exe` tambem sao verificados pela arvore de arquivos. Essa opcao fica desligada por padrao porque consome mais limite da API.
-- `Instalar` baixa o `.exe` para uma pasta gerenciada em `%LOCALAPPDATA%\MadiaznX Hub\apps`.
+- `Instalar` baixa o `.exe` para uma pasta gerenciada em `%LOCALAPPDATA%\MadiaznX Hub\apps`. Arquivos com nome de instalador, como `Setup.exe`, sao executados como instalador e nao sao usados pelo botao `Abrir`.
 - `Atualizar` aparece em azul quando a versao instalada e diferente da versao mais recente encontrada.
 - `Desinstalar` remove a pasta instalada e a pasta de dados gerenciada daquele app.
 - Apps detectados como instalados pelo Windows tambem podem ser desinstalados quando o Registro informar um desinstalador; nesse caso o Hub chama o desinstalador oficial do app.
-- Quando a opcao de instalador esta em `Executar instalador`, o Hub nao usa o instalador baixado como botao `Abrir`; ele tenta localizar e abrir o app real instalado no Windows.
+- Quando a opcao de instalador esta em `Executar instalador`, ou quando o arquivo parece um setup, o Hub nao usa o instalador baixado como botao `Abrir`; ele tenta localizar e abrir o app real instalado no Windows.
 - `Versoes` permite instalar ou baixar executaveis anteriores.
 - As opcoes de instalador sao salvas por app. Da para manter o `.exe` gerenciado pelo Hub ou executar o instalador com argumentos como `/S`.
 
