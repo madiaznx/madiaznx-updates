@@ -275,7 +275,7 @@ function renderAppCard(appInfo) {
   return `
     <article class="app-card" data-app-id="${escapeHtml(appInfo.id)}">
       <div class="app-icon-wrap">
-        <img class="app-icon" src="${escapeAttr(iconUrl)}" alt="" crossorigin="anonymous" data-fallback="${escapeAttr(fallbackLogo)}" />
+        <img class="app-icon" src="${escapeAttr(iconUrl)}" alt="" data-fallback="${escapeAttr(fallbackLogo)}" />
       </div>
       <div class="app-main">
         <div class="app-title-row">
@@ -526,13 +526,18 @@ function applyTheme() {
 
 function bindIconFallbacks() {
   document.querySelectorAll('.app-icon').forEach((img) => {
-    img.addEventListener('error', () => {
-      if (!img.dataset.failed) {
-        img.dataset.failed = 'true';
-        img.src = img.dataset.fallback || fallbackLogo;
-      }
-    }, { once: true });
+    img.addEventListener('error', () => setIconFallback(img), { once: true });
+
+    if (img.complete && img.naturalWidth === 0) {
+      setIconFallback(img);
+    }
   });
+}
+
+function setIconFallback(img) {
+  if (img.dataset.failed) return;
+  img.dataset.failed = 'true';
+  img.src = img.dataset.fallback || fallbackLogo;
 }
 
 function markMonochromeIcons() {
