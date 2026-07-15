@@ -302,6 +302,7 @@ function renderAppCard(appInfo) {
           <span class="meta-chip">${escapeHtml(latest.versionName || 'latest')}</span>
           <span class="meta-chip">${formatSize(latest.size)}</span>
           <span class="meta-chip">${sourceLabel(latest.source)}</span>
+          ${appInfo.private ? '<span class="meta-chip">Privado</span>' : ''}
           ${installed ? `<span class="meta-chip">Atual: ${escapeHtml(installed.versionName)}</span>` : ''}
           ${installed?.installSource === 'system' ? '<span class="meta-chip">Detectado pelo Windows</span>' : ''}
           ${installed?.versionSource === 'exe' ? '<span class="meta-chip">VersÃ£o lida do .exe</span>' : ''}

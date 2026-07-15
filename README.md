@@ -35,6 +35,7 @@ Ao reiniciar, o Hub tenta procurar atualizacao automaticamente. Quando uma atual
 ## Como funciona
 
 - Ao abrir ou clicar em atualizar, o app consulta os repositorios do usuario configurado.
+- Com token, o Hub consulta repositorios publicos e privados que aquele token consegue acessar e filtra pelo usuario/organizacao informado no campo GitHub.
 - Sem token, a abertura usa cache local recente para evitar bloqueio de rate limit do GitHub. O botao atualizar forca uma consulta nova.
 - Releases do GitHub sao usadas como fonte principal de versoes.
 - Quando uma release tiver mais de um `.exe`, o Hub mostra apenas um item por versao e prefere o arquivo que contem a versao no nome.
@@ -49,7 +50,7 @@ Ao reiniciar, o Hub tenta procurar atualizacao automaticamente. Quando uma atual
 - `Versoes` permite instalar ou baixar executaveis anteriores.
 - As opcoes de instalador sao salvas por app. Da para manter o `.exe` gerenciado pelo Hub ou executar o instalador com argumentos como `/S`.
 
-Para repositorios privados ou contas com muitos repositorios, informe um token GitHub com permissao de leitura de repositorios. Sem token, o GitHub pode bloquear temporariamente por IP com `API rate limit exceeded`.
+Para repositorios privados ou contas com muitos repositorios, informe um token GitHub com permissao de leitura de repositorios. Token classic precisa do escopo `repo`; token fine-grained precisa ter acesso aos repositorios desejados e permissao de leitura para metadata/contents. Sem token, o GitHub pode bloquear temporariamente por IP com `API rate limit exceeded`.
 
 ## Observacao
 

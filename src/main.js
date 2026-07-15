@@ -985,6 +985,7 @@ async function scanRepo(repo, settings) {
     id: `${repo.owner.login}/${repo.name}`,
     owner: repo.owner.login,
     repo: repo.name,
+    private: Boolean(repo.private),
     name: cleanRepoName(repo.name),
     description: repo.description || '',
     repoUrl: repo.html_url,
@@ -998,7 +999,7 @@ async function scanRepo(repo, settings) {
 async function loadRepos(owner, token) {
   const ownerName = owner || DEFAULT_OWNER;
   const publicUrl = `https://api.github.com/users/${encodeURIComponent(ownerName)}/repos?per_page=100&sort=updated&type=owner`;
-  const tokenUrl = 'https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member';
+  const tokenUrl = 'https://api.github.com/user/repos?per_page=100&sort=updated&visibility=all&affiliation=owner,collaborator,organization_member';
   const url = token ? tokenUrl : publicUrl;
   const repos = await fetchAllPages(url, token, 10);
 
