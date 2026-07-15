@@ -793,6 +793,47 @@ function iconFromReleaseAssets(assets) {
   return asset ? asset.browser_download_url : '';
 }
 
+function repoIconRawUrl(repo, filePath) {
+  const branch = repo.default_branch || 'main';
+  return `https://raw.githubusercontent.com/${repo.owner.login}/${repo.name}/${encodeURIComponent(branch)}/${encodedPath(filePath)}`;
+}
+
+function uniqueValues(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function repoIconCandidates(repo) {
+  const repoBase = repo.name
+    .replace(/[-_]?updates?$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  const compactBase = repoBase.replace(/\s+/g, '-').toLowerCase();
+  const spacedBase = repoBase.replace(/\s+/g, ' ').toLowerCase();
+  const names = uniqueValues([
+    'logo.png',
+    'logo.jpg',
+    'logo.jpeg',
+    'logo.webp',
+    'icon.png',
+    'icon.jpg',
+    'icon.jpeg',
+    'app-icon.png',
+    'favicon.png',
+    'favicon.ico',
+    compactBase && `${compactBase}.png`,
+    compactBase && `logo-${compactBase}.png`,
+    compactBase && `${compactBase}-logo.png`,
+    spacedBase && `logo ${spacedBase}.png`,
+    spacedBase && `${spacedBase} logo.png`,
+    spacedBase && `${spacedBase}.png`
+  ]);
+  const folders = ['', 'assets/', 'public/', 'src/assets/', 'build/', 'resources/'];
+
+  return uniqueValues(folders.flatMap((folder) => {
+    return names.map((name) => repoIconRawUrl(repo, `${folder}${name}`));
+  }));
+}
+
 async function scanRepo(repo, settings) {
   const token = settings.token;
   const releases = await fetchAllPages(`${repo.url}/releases?per_page=100`, token, 3);
@@ -826,6 +867,13 @@ async function scanRepo(repo, settings) {
   if (!versions.length) return null;
 
   const iconUrl = treeIconUrl || iconFromReleaseAssets(releaseAssets) || repo.owner.avatar_url || resourcePath('assets', 'logo-madiaznx.png');
+  const iconUrls = uniqueValues([
+    treeIconUrl,
+    iconFromReleaseAssets(releaseAssets),
+    ...repoIconCandidates(repo),
+    repo.owner.avatar_url,
+    resourcePath('assets', 'logo-madiaznx.png')
+  ]);
   const latest = versions[0];
 
   return {
@@ -836,6 +884,7 @@ async function scanRepo(repo, settings) {
     description: repo.description || '',
     repoUrl: repo.html_url,
     iconUrl,
+    iconUrls,
     latest,
     versions
   };

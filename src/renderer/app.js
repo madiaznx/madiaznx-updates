@@ -266,7 +266,8 @@ function renderAppCard(appInfo) {
   const latest = appInfo.latest;
   const progress = state.progress[appInfo.id];
   const hasUpdate = hasUpdateAvailable(installed, latest);
-  const iconUrl = installed?.iconUrl || appInfo.iconUrl || fallbackLogo;
+  const iconUrls = iconListForApp(installed, appInfo);
+  const iconUrl = iconUrls[0] || fallbackLogo;
   const description = appInfo.description || appInfo.repoUrl;
   const statusPill = installed
     ? `<span class="state-pill ${hasUpdate ? 'update' : 'installed'}">${hasUpdate ? 'Atualização disponível' : installedLabel(installed)}</span>`
@@ -275,7 +276,7 @@ function renderAppCard(appInfo) {
   return `
     <article class="app-card" data-app-id="${escapeHtml(appInfo.id)}">
       <div class="app-icon-wrap">
-        <img class="app-icon" src="${escapeAttr(iconUrl)}" alt="" data-fallback="${escapeAttr(fallbackLogo)}" />
+        <img class="app-icon" src="${escapeAttr(iconUrl)}" alt="" data-icon-index="0" data-icon-urls="${escapeAttr(JSON.stringify(iconUrls))}" data-fallback="${escapeAttr(fallbackLogo)}" />
       </div>
       <div class="app-main">
         <div class="app-title-row">
@@ -297,6 +298,60 @@ function renderAppCard(appInfo) {
       ${progress ? renderProgress(progress) : ''}
     </article>
   `;
+}
+
+function iconListForApp(installed, appInfo) {
+  const installedIcon = installed?.iconUrl || '';
+  const installedIconIsLocal = /^(file:|data:)/i.test(installedIcon);
+
+  return [...new Set([
+    installedIconIsLocal ? installedIcon : '',
+    ...(Array.isArray(appInfo.iconUrls) ? appInfo.iconUrls : []),
+    ...repoIconCandidates(appInfo),
+    appInfo.iconUrl,
+    installedIconIsLocal ? '' : installedIcon,
+    fallbackLogo
+  ].filter(Boolean))];
+}
+
+function repoIconCandidates(appInfo) {
+  if (!appInfo?.owner || !appInfo?.repo) return [];
+
+  const repoBase = String(appInfo.repo)
+    .replace(/[-_]?updates?$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  const compactBase = repoBase.replace(/\s+/g, '-').toLowerCase();
+  const spacedBase = repoBase.replace(/\s+/g, ' ').toLowerCase();
+  const names = [
+    'logo.png',
+    'logo.jpg',
+    'logo.jpeg',
+    'logo.webp',
+    'icon.png',
+    'icon.jpg',
+    'icon.jpeg',
+    'app-icon.png',
+    'favicon.png',
+    'favicon.ico',
+    compactBase && `${compactBase}.png`,
+    compactBase && `logo-${compactBase}.png`,
+    compactBase && `${compactBase}-logo.png`,
+    spacedBase && `logo ${spacedBase}.png`,
+    spacedBase && `${spacedBase} logo.png`,
+    spacedBase && `${spacedBase}.png`
+  ].filter(Boolean);
+  const folders = ['', 'assets/', 'public/', 'src/assets/', 'build/', 'resources/'];
+
+  return [...new Set(folders.flatMap((folder) => {
+    return names.map((name) => {
+      return `https://raw.githubusercontent.com/${encodeURIComponent(appInfo.owner)}/${encodeURIComponent(appInfo.repo)}/main/${encodePath(`${folder}${name}`)}`;
+    });
+  }))];
+}
+
+function encodePath(value) {
+  return String(value).split('/').map((segment) => encodeURIComponent(segment)).join('/');
 }
 
 function renderActions(appInfo, installed, hasUpdate) {
@@ -526,7 +581,7 @@ function applyTheme() {
 
 function bindIconFallbacks() {
   document.querySelectorAll('.app-icon').forEach((img) => {
-    img.addEventListener('error', () => setIconFallback(img), { once: true });
+    img.addEventListener('error', () => setIconFallback(img));
 
     if (img.complete && img.naturalWidth === 0) {
       setIconFallback(img);
@@ -535,9 +590,28 @@ function bindIconFallbacks() {
 }
 
 function setIconFallback(img) {
+  const urls = parseIconUrls(img);
+  const currentIndex = Number(img.dataset.iconIndex || 0);
+  const nextIndex = currentIndex + 1;
+
+  if (nextIndex < urls.length) {
+    img.dataset.iconIndex = String(nextIndex);
+    img.src = urls[nextIndex];
+    return;
+  }
+
   if (img.dataset.failed) return;
   img.dataset.failed = 'true';
   img.src = img.dataset.fallback || fallbackLogo;
+}
+
+function parseIconUrls(img) {
+  try {
+    const parsed = JSON.parse(img.dataset.iconUrls || '[]');
+    return Array.isArray(parsed) && parsed.length ? parsed : [img.dataset.fallback || fallbackLogo];
+  } catch {
+    return [img.dataset.fallback || fallbackLogo];
+  }
 }
 
 function markMonochromeIcons() {
