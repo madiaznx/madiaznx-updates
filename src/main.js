@@ -23,6 +23,8 @@ const GITHUB_API_VERSION = '2022-11-28';
 const USER_AGENT = 'MadiaznX-Hub';
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 const CATALOG_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
+const UNKNOWN_VERSION_NAME = 'Versao desconhecida';
+const SELF_UPDATE_REPOS = new Set(['madiaznx-updates']);
 const IMAGE_MIME = new Map([
   ['.png', 'image/png'],
   ['.jpg', 'image/jpeg'],
@@ -406,18 +408,28 @@ function normalizeDetectedVersion(value) {
   return match ? match[0].replace(/,/g, '.') : text;
 }
 
+function recordHasDetectedVersion(record) {
+  return ['registry', 'exe', 'package'].includes(record?.versionSource);
+}
+
+function recordHasKnownVersion(record) {
+  return Boolean(record?.versionName && record.versionName !== UNKNOWN_VERSION_NAME && record.versionName !== 'Instalado no Windows');
+}
+
 async function readExecutableVersion(filePath) {
   if (process.platform !== 'win32' || !filePath || !(await pathExists(filePath))) return '';
 
-  const script = `
+  const script = `& {
+param([string]$exe)
 $ErrorActionPreference = 'SilentlyContinue'
-$item = Get-Item -LiteralPath $args[0]
+$item = Get-Item -LiteralPath $exe
 if ($null -eq $item) { exit 0 }
 $info = $item.VersionInfo
 [pscustomobject]@{
   ProductVersion = $info.ProductVersion
   FileVersion = $info.FileVersion
 } | ConvertTo-Json -Compress
+}
 `;
 
   try {
@@ -433,6 +445,55 @@ $info = $item.VersionInfo
     console.warn(`Could not read executable version from ${filePath}:`, error.message);
     return '';
   }
+}
+
+async function readAsarPackageVersion(asarPath) {
+  try {
+    const handle = await fs.open(asarPath, 'r');
+    try {
+      const headerPrefix = Buffer.alloc(16);
+      await handle.read(headerPrefix, 0, headerPrefix.length, 0);
+      const headerSize = headerPrefix.readUInt32LE(12);
+      if (!headerSize || headerSize > 16 * 1024 * 1024) return '';
+
+      const headerBuffer = Buffer.alloc(headerSize);
+      await handle.read(headerBuffer, 0, headerSize, 16);
+      const header = JSON.parse(headerBuffer.toString('utf8'));
+      const entry = header.files?.['package.json'];
+      if (!entry?.size) return '';
+
+      const packageBuffer = Buffer.alloc(entry.size);
+      await handle.read(packageBuffer, 0, entry.size, 16 + headerSize + Number(entry.offset || 0));
+      const packageJson = JSON.parse(packageBuffer.toString('utf8'));
+      return normalizeDetectedVersion(packageJson.version);
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return '';
+  }
+}
+
+async function readPackagedAppVersion(exePath) {
+  if (!exePath) return '';
+
+  const resourcesDir = path.join(path.dirname(exePath), 'resources');
+  const unpackedPackagePath = path.join(resourcesDir, 'app', 'package.json');
+  const asarPath = path.join(resourcesDir, 'app.asar');
+
+  try {
+    const packageJson = await readJson(unpackedPackagePath, null);
+    const unpackedVersion = normalizeDetectedVersion(packageJson?.version);
+    if (unpackedVersion) return unpackedVersion;
+  } catch {
+    // readJson already handles missing and invalid files.
+  }
+
+  if (await pathExists(asarPath)) {
+    return readAsarPackageVersion(asarPath);
+  }
+
+  return '';
 }
 
 async function findBestExeInDirectory(rootDir, appInfo) {
@@ -583,7 +644,11 @@ async function buildSystemInstallRecord(appInfo, entry) {
     : '';
   const displayVersion = normalizeDetectedVersion(entry.DisplayVersion);
   const executableVersion = displayVersion ? '' : await readExecutableVersion(exePath);
-  const installedVersion = displayVersion || executableVersion;
+  const packagedVersion = displayVersion || executableVersion ? '' : await readPackagedAppVersion(exePath);
+  const installedVersion = displayVersion || executableVersion || packagedVersion;
+  const versionSource = displayVersion
+    ? 'registry'
+    : (executableVersion ? 'exe' : (packagedVersion ? 'package' : ''));
 
   return {
     appId: appInfo.id,
@@ -592,8 +657,8 @@ async function buildSystemInstallRecord(appInfo, entry) {
     repo: appInfo.repo,
     repoUrl: appInfo.repoUrl,
     versionKey: `system:${installedVersion || exePath || shortcutPath}`,
-    versionName: installedVersion || 'Instalado no Windows',
-    versionSource: displayVersion ? 'registry' : (executableVersion ? 'exe' : ''),
+    versionName: installedVersion || UNKNOWN_VERSION_NAME,
+    versionSource,
     fileName: path.basename(exePath || shortcutPath),
     exePath,
     shortcutPath,
@@ -661,8 +726,14 @@ async function detectInstalledAppForRecord(record) {
 }
 
 function mergeInstallerMetadata(systemRecord, record) {
+  const detectedVersion = recordHasDetectedVersion(systemRecord);
+  const fallbackVersion = recordHasKnownVersion(record);
+
   return {
     ...systemRecord,
+    versionKey: detectedVersion ? systemRecord.versionKey : (fallbackVersion ? record.versionKey : systemRecord.versionKey),
+    versionName: detectedVersion ? systemRecord.versionName : (fallbackVersion ? record.versionName : systemRecord.versionName),
+    versionSource: detectedVersion ? systemRecord.versionSource : (fallbackVersion ? 'hub-installer' : systemRecord.versionSource),
     installerPath: record.installerPath || record.exePath || '',
     installerVersionKey: record.installerVersionKey || record.versionKey,
     installerVersionName: record.installerVersionName || record.versionName,
@@ -701,7 +772,9 @@ async function getInstalledForCatalog(apps) {
     }
 
     if (detected[appInfo.id]) {
-      nextRecords[appInfo.id] = detected[appInfo.id];
+      nextRecords[appInfo.id] = current
+        ? mergeInstallerMetadata(detected[appInfo.id], current)
+        : detected[appInfo.id];
       changed = true;
     } else if (current?.installSource === 'system') {
       delete nextRecords[appInfo.id];
@@ -1005,6 +1078,7 @@ async function loadRepos(owner, token) {
 
   return repos
     .filter((repo) => !repo.archived)
+    .filter((repo) => !SELF_UPDATE_REPOS.has(String(repo.name || '').toLowerCase()))
     .filter((repo) => repo.owner && repo.owner.login.toLowerCase() === ownerName.toLowerCase());
 }
 

@@ -8,6 +8,12 @@ const versionedSetupName = `MadiaznX-Hub-Setup-v${packageJson.version}.exe`;
 const stableSetupPath = path.join(root, 'dist', stableSetupName);
 const versionedSetupPath = path.join(root, 'dist', versionedSetupName);
 
+for (const part of String(packageJson.version).split('.')) {
+  if (Number(part) > 9) {
+    throw new Error(`Versao invalida: ${packageJson.version}. Use no maximo .9 em cada parte; depois avance a parte anterior.`);
+  }
+}
+
 if (!fs.existsSync(stableSetupPath)) {
   throw new Error(`Setup nao encontrado: ${stableSetupPath}`);
 }

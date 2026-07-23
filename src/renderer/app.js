@@ -261,7 +261,9 @@ function hasUpdateAvailable(installed, latest) {
   if (installed.installSource === 'system') {
     const installedVersion = comparableVersion(installed.versionName);
     const latestVersion = comparableVersion(latest.versionName);
-    return Boolean(installedVersion && latestVersion && installedVersion !== latestVersion);
+    if (!latestVersion) return false;
+    if (!installedVersion) return true;
+    return installedVersion !== latestVersion;
   }
 
   return true;
@@ -306,6 +308,8 @@ function renderAppCard(appInfo) {
           ${installed ? `<span class="meta-chip">Atual: ${escapeHtml(installed.versionName)}</span>` : ''}
           ${installed?.installSource === 'system' ? '<span class="meta-chip">Detectado pelo Windows</span>' : ''}
           ${installed?.versionSource === 'exe' ? '<span class="meta-chip">VersÃ£o lida do .exe</span>' : ''}
+          ${installed?.versionSource === 'package' ? '<span class="meta-chip">VersÃ£o lida do pacote</span>' : ''}
+          ${installed?.versionSource === 'hub-installer' ? '<span class="meta-chip">VersÃ£o salva pelo Hub</span>' : ''}
         </div>
       </div>
       <div class="app-actions">
